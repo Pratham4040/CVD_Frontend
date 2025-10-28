@@ -8,7 +8,17 @@ function App() {
   const [error, setError] = useState(null)
   const fileInputRef = useRef(null)
 
-  const API_URL = 'https://cvd-backend.onrender.com/api/simulate'
+  const API_BASE = (() => {
+    const fromEnvBase = import.meta.env.VITE_API_BASE
+    const fromEnvUrl = import.meta.env.VITE_API_URL
+    if (fromEnvBase) return fromEnvBase.replace(/\/$/, '')
+    if (fromEnvUrl) {
+      try { return new URL(fromEnvUrl).origin } catch {}
+    }
+    // local fallback for dev
+    return 'https://cvd-backend.onrender.com'
+  })()
+  const API_URL = `${API_BASE}/api/simulate`
 
   const simulateOne = async (file, cvdType) => {
     const formData = new FormData()

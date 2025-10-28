@@ -1,10 +1,100 @@
 import { useLocation, useNavigate } from 'react-router-dom'
+import { useState } from 'react'
 
 export default function ResultPage() {
     const { state } = useLocation()
     const navigate = useNavigate()
     const originalUrl = state?.originalUrl
     const images = state?.images || {}
+        const [palette, setPalette] = useState(null)
+        const [analysis, setAnalysis] = useState(null)
+        const [busy, setBusy] = useState(false)
+        const [err, setErr] = useState(null)
+
+        const API_BASE = (() => {
+            const fromEnvBase = import.meta.env.VITE_API_BASE
+            const fromEnvUrl = import.meta.env.VITE_API_URL
+            if (fromEnvBase) return fromEnvBase.replace(/\/$/, '')
+            if (fromEnvUrl) {
+                try { return new URL(fromEnvUrl).origin } catch {}
+            }
+      return 'http://127.0.0.1:8000'
+    })()
+        const fetchOriginalBlob = async () => {
+            const res = await fetch(originalUrl)
+            if (!res.ok) throw new Error('Failed to read original image')
+            return await res.blob()
+        }
+
+        const handleAnalyze = async () => {
+            setBusy(true); setErr(null)
+            try {
+                // 1) extract palette
+                const blob = await fetchOriginalBlob()
+                const fd = new FormData()
+                fd.append('file', new File([blob], 'image.jpg', { type: blob.type || 'image/jpeg' }))
+                fd.append('k', '5')
+                const pRes = await fetch(`${API_BASE}/api/palette`, { method: 'POST', body: fd })
+                if (!pRes.ok) throw new Error('Palette extraction failed')
+                const pJson = await pRes.json()
+                setPalette(pJson.palette)
+                const colors = (pJson.palette || []).map(x => x.hex)
+                // 2) build pairs: each color on white and on gray-900
+                const pairs = []
+                colors.forEach(hx => {
+                    pairs.push({ fg: hx, bg: '#ffffff' })
+                    pairs.push({ fg: hx, bg: '#111827' })
+                })
+                const aRes = await fetch(`${API_BASE}/api/palette/analyze`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ palette: colors, pairs })
+                })
+                if (!aRes.ok) throw new Error('Analysis failed')
+                const aJson = await aRes.json()
+                setAnalysis(aJson)
+            } catch (e) {
+                console.error(e)
+                setErr(e.message || 'Analyze failed')
+            } finally {
+                setBusy(false)
+            }
+        }
+
+        const handleDownloadTokens = async () => {
+            try {
+                const colors = (palette || []).map(x => x.hex)
+                if (!colors.length) return
+                const tRes = await fetch(`${API_BASE}/api/palette/export`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ palette: colors })
+                })
+                if (!tRes.ok) throw new Error('Export failed')
+                const tJson = await tRes.json()
+                // download CSS
+                const cssBlob = new Blob([tJson.cssVariables], { type: 'text/css' })
+                const cssUrl = URL.createObjectURL(cssBlob)
+                const a1 = document.createElement('a')
+                a1.href = cssUrl; a1.download = 'tokens.css'; a1.click()
+                URL.revokeObjectURL(cssUrl)
+                // download tailwind snippet
+                const twBlob = new Blob([tJson.tailwindSnippet], { type: 'text/plain' })
+                const twUrl = URL.createObjectURL(twBlob)
+                const a2 = document.createElement('a')
+                a2.href = twUrl; a2.download = 'tailwind-colors.txt'; a2.click()
+                URL.revokeObjectURL(twUrl)
+                // download diff patch
+                const diffBlob = new Blob([tJson.diff], { type: 'text/plain' })
+                const diffUrl = URL.createObjectURL(diffBlob)
+                const a3 = document.createElement('a')
+                a3.href = diffUrl; a3.download = 'tokens.patch'; a3.click()
+                URL.revokeObjectURL(diffUrl)
+            } catch (e) {
+                console.error(e)
+                setErr(e.message || 'Download failed')
+            }
+        }
 
     // If navigated directly without state, go back home
     if (!originalUrl) {
@@ -73,6 +163,221 @@ export default function ResultPage() {
                                     </a>
 </div>
 </div>
+</div>
+{/* Palette & Accessibility */}
+{/* Palette & Accessibility */}
+<div className="px-4 sm:px-10 pb-16">
+    <div className="border-t border-slate-200 dark:border-slate-700 pt-8 mt-8">
+        <h2 className="text-[#0d171b] dark:text-slate-50 text-2xl font-bold mb-2">Color Accessibility Check</h2>
+        <p className="text-slate-600 dark:text-slate-400 text-sm mb-6">Analyze your image's colors to ensure they're easy to see and distinguish for people with color vision differences.</p>
+        <div className="flex flex-wrap items-center gap-3 mb-6">
+            <button disabled={busy} onClick={handleAnalyze} className="flex items-center rounded-lg h-10 px-4 bg-primary text-white text-sm font-bold disabled:opacity-60 hover:bg-primary/90">{busy ? 'Analyzing…' : 'Check My Colors'}</button>
+            <button disabled={busy || !palette} onClick={handleDownloadTokens} className="flex items-center rounded-lg h-10 px-4 bg-slate-800 text-white text-sm font-bold disabled:opacity-60 hover:bg-slate-700">Export as Design Tokens</button>
+            {err && <span className="text-red-500 text-sm">{err}</span>}
+        </div>
+    </div>
+    {palette && (
+        <div className="mb-8 bg-slate-50 dark:bg-slate-900/50 rounded-lg p-6">
+            <h3 className="text-lg font-bold mb-2 text-[#0d171b] dark:text-slate-50">Main Colors Found</h3>
+            <p className="text-sm text-slate-600 dark:text-slate-400 mb-4">These are the dominant colors in your image, sorted by how much they appear.</p>
+            <div className="flex flex-wrap gap-4">
+                {palette.map((c, idx) => (
+                    <div key={idx} className="flex flex-col items-center gap-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-3 min-w-[120px]">
+                        <div className="w-16 h-16 rounded-lg shadow-sm" style={{ background: c.hex }} />
+                        <div className="text-center">
+                            <div className="text-sm font-mono text-slate-700 dark:text-slate-200">{c.hex}</div>
+                            <div className="text-xs text-slate-500">{Math.round(c.percent*100)}% of image</div>
+                        </div>
+                    </div>
+                ))}
+            </div>
+        </div>
+    )}
+    {analysis && (
+        <div className="space-y-8">
+            {/* Readability Check */}
+            <div className="bg-slate-50 dark:bg-slate-900/50 rounded-lg p-6">
+                <div className="flex items-start gap-3 mb-4">
+                    <div className="flex-shrink-0 w-10 h-10 rounded-full bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center">
+                        <span className="text-blue-600 dark:text-blue-400 text-xl">📖</span>
+                    </div>
+                    <div>
+                        <h4 className="font-bold text-lg mb-1 text-[#0d171b] dark:text-slate-50">Readability Test</h4>
+                        <p className="text-sm text-slate-600 dark:text-slate-400">Checks if text would be easy to read on light and dark backgrounds. Pass = easy to read.</p>
+                    </div>
+                </div>
+                <div className="space-y-3">
+                    {(analysis.wcag || []).map((r, i) => {
+                        const bgName = r.bg === '#ffffff' ? 'white background' : 'dark background'
+                        return (
+                            <div key={i} className="flex flex-wrap items-center justify-between gap-4 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-4">
+                                <div className="flex items-center gap-3 flex-1 min-w-[200px]">
+                                    <div className="w-10 h-10 rounded-lg shadow-sm flex-shrink-0" style={{ background: r.fg, border: '2px solid #e5e7eb' }} />
+                                    <div className="text-sm">
+                                        <div className="text-slate-900 dark:text-slate-100 font-medium">Color {r.fg}</div>
+                                        <div className="text-slate-500 text-xs">on {bgName}</div>
+                                    </div>
+                                </div>
+                                <div className="flex items-center gap-3">
+                                    <div className="text-right">
+                                        <div className="text-xs text-slate-500 mb-1">Contrast: {r.contrast}:1</div>
+                                        <div className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-bold ${r.passAA ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'}`}>
+                                            {r.passAA ? '✓ Easy to read' : '✗ Hard to read'}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        )
+                    })}
+                </div>
+                {(analysis.wcag || []).length === 0 && (
+                    <p className="text-slate-500 text-sm italic">No contrast pairs to check.</p>
+                )}
+            </div>
+
+            {/* Color Confusion Risk */}
+            <div className="bg-slate-50 dark:bg-slate-900/50 rounded-lg p-6">
+                <div className="flex items-start gap-3 mb-4">
+                    <div className="flex-shrink-0 w-10 h-10 rounded-full bg-purple-100 dark:bg-purple-900/30 flex items-center justify-center">
+                        <span className="text-purple-600 dark:text-purple-400 text-xl">👁️</span>
+                    </div>
+                    <div>
+                        <h4 className="font-bold text-lg mb-1 text-[#0d171b] dark:text-slate-50">Color Blindness Check</h4>
+                        <p className="text-sm text-slate-600 dark:text-slate-400">Shows how well these color pairs work for people with color vision differences. Checks both similarity and readability.</p>
+                    </div>
+                </div>
+                <div className="space-y-3">
+                    {(analysis.cvd || [])
+                        .filter(r => !r.readable || r.risk >= 0.3) // Show problems first
+                        .sort((a,b) => {
+                            if (!a.readable && b.readable) return -1
+                            if (a.readable && !b.readable) return 1
+                            return b.risk - a.risk
+                        })
+                        .slice(0,10)
+                        .map((r, i) => {
+                        const riskPercent = Math.round(r.risk*100)
+                        const hasContrastIssue = !r.readable
+                        const contrastDrop = r.contrastLoss > 1.0
+                        
+                        return (
+                            <div key={i} className={`bg-white dark:bg-slate-800 border-2 rounded-lg p-4 ${hasContrastIssue ? 'border-red-300 dark:border-red-700' : 'border-slate-200 dark:border-slate-700'}`}>
+                                <div className="flex flex-wrap items-start justify-between gap-4">
+                                    <div className="flex items-start gap-3 flex-1">
+                                        <div className="flex gap-2 flex-shrink-0">
+                                            <div className="w-12 h-12 rounded-lg shadow-sm" style={{ background: r.c1, border: '2px solid #e5e7eb' }} />
+                                            <div className="w-12 h-12 rounded-lg shadow-sm" style={{ background: r.c2, border: '2px solid #e5e7eb' }} />
+                                        </div>
+                                        <div className="text-sm flex-1 min-w-0">
+                                            <div className="font-medium text-slate-900 dark:text-slate-100 mb-1">
+                                                {r.c1} + {r.c2}
+                                            </div>
+                                            {hasContrastIssue ? (
+                                                <div className="space-y-1">
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="inline-flex items-center px-2 py-1 rounded text-xs font-bold bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400">
+                                                            ⚠️ Hard to read
+                                                        </span>
+                                                    </div>
+                                                    <div className="text-xs text-slate-600 dark:text-slate-400">
+                                                        In <span className="font-semibold">{r.worstCVD}</span>: contrast drops to {r.cvdContrast}:1
+                                                        <br/>
+                                                        <span className="text-red-600 dark:text-red-400">Text might be unreadable (needs 3.0+ for large text)</span>
+                                                    </div>
+                                                </div>
+                                            ) : contrastDrop ? (
+                                                <div className="space-y-1">
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="inline-flex items-center px-2 py-1 rounded text-xs font-bold bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
+                                                            {riskPercent}% confusion risk
+                                                        </span>
+                                                    </div>
+                                                    <div className="text-xs text-slate-600 dark:text-slate-400">
+                                                        Contrast: {r.originalContrast}:1 → {r.cvdContrast}:1 in {r.worstCVD}
+                                                        <br/>
+                                                        <span className="text-amber-600 dark:text-amber-400">These colors may look similar</span>
+                                                    </div>
+                                                </div>
+                                            ) : (
+                                                <div className="space-y-1">
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="inline-flex items-center px-2 py-1 rounded text-xs font-bold bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400">
+                                                            ✓ Accessible
+                                                        </span>
+                                                    </div>
+                                                    <div className="text-xs text-slate-500">
+                                                        Contrast: {r.cvdContrast}:1 (readable)
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        )
+                    })}
+                </div>
+                {(analysis.cvd || []).length === 0 && (
+                    <p className="text-slate-500 text-sm italic">No color pairs found.</p>
+                )}
+            </div>
+            {/* Suggestions */}
+            {analysis.suggestions?.length ? (
+                <div className="bg-slate-50 dark:bg-slate-900/50 rounded-lg p-6">
+                    <div className="flex items-start gap-3 mb-4">
+                        <div className="flex-shrink-0 w-10 h-10 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center">
+                            <span className="text-green-600 dark:text-green-400 text-xl">💡</span>
+                        </div>
+                        <div>
+                            <h4 className="font-bold text-lg mb-1 text-[#0d171b] dark:text-slate-50">Suggested Improvements</h4>
+                            <p className="text-sm text-slate-600 dark:text-slate-400">Simple color changes that would make your design more accessible.</p>
+                        </div>
+                    </div>
+                    <div className="space-y-3">
+                        {analysis.suggestions.map((s, idx) => (
+                            <div key={idx} className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-4">
+                                {s.type === 'contrast' ? (
+                                    <div className="flex flex-wrap items-center gap-4">
+                                        <div className="flex items-center gap-3 flex-1 min-w-[200px]">
+                                            <div className="flex gap-2 items-center">
+                                                <div className="w-10 h-10 rounded-lg shadow-sm" style={{ background: s.pair.fg, border: '2px solid #e5e7eb' }} />
+                                                <span className="text-slate-400">→</span>
+                                                <div className="w-10 h-10 rounded-lg shadow-sm" style={{ background: s.suggestedFg, border: '2px solid #e5e7eb' }} />
+                                            </div>
+                                            <div className="text-sm">
+                                                <div className="text-slate-900 dark:text-slate-100 font-medium">Better text color</div>
+                                                <div className="text-slate-500 text-xs">Change {s.pair.fg} to {s.suggestedFg}</div>
+                                            </div>
+                                        </div>
+                                        <div className="text-xs text-slate-600 dark:text-slate-400 bg-slate-100 dark:bg-slate-700 px-3 py-1 rounded-full">
+                                            +{s.delta.toFixed(1)} easier to read
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <div className="flex flex-wrap items-center gap-4">
+                                        <div className="flex items-center gap-3 flex-1 min-w-[200px]">
+                                            <div className="flex gap-2 items-center">
+                                                <div className="w-10 h-10 rounded-lg shadow-sm" style={{ background: s.target, border: '2px solid #e5e7eb' }} />
+                                                <span className="text-slate-400">→</span>
+                                                <div className="w-10 h-10 rounded-lg shadow-sm" style={{ background: s.suggested, border: '2px solid #e5e7eb' }} />
+                                            </div>
+                                            <div className="text-sm">
+                                                <div className="text-slate-900 dark:text-slate-100 font-medium">Less confusing color</div>
+                                                <div className="text-slate-500 text-xs">Change {s.target} to {s.suggested}</div>
+                                            </div>
+                                        </div>
+                                        <div className="text-xs text-slate-600 dark:text-slate-400 bg-slate-100 dark:bg-slate-700 px-3 py-1 rounded-full">
+                                            More distinct
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            ) : null}
+        </div>
+    )}
 </div>
 </main>
 </div>
