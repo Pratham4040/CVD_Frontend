@@ -18,7 +18,7 @@ export default function ResultPage() {
             if (fromEnvUrl) {
                 try { return new URL(fromEnvUrl).origin } catch {}
             }
-      return 'http://127.0.0.1:8000'
+      return 'https://cvd-backend.onrender.com'
     })()
         const fetchOriginalBlob = async () => {
             const res = await fetch(originalUrl)
