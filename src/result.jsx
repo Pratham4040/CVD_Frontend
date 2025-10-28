@@ -193,6 +193,26 @@ export default function ResultPage() {
             </div>
         </div>
     )}
+    {/* CVD Visibility Scores */}
+    {analysis?.cvdScores && (
+      <div className="mb-8 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+        {[
+          { key: 'protanopia', label: 'Protanopia', color: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400', icon: '🟥' },
+          { key: 'deuteranopia', label: 'Deuteranopia', color: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400', icon: '🟩' },
+          { key: 'tritanopia', label: 'Tritanopia', color: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400', icon: '🟦' },
+          { key: 'overall', label: 'Overall', color: 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400', icon: '⭐' },
+        ].map(({ key, label, color, icon }) => (
+          <div key={key} className={`rounded-xl p-5 flex flex-col items-center shadow border border-slate-200 dark:border-slate-700 ${color}`}>
+            <div className="text-3xl mb-2">{icon}</div>
+            <div className="text-lg font-bold mb-1">{label}</div>
+            <div className="text-2xl font-black">{analysis.cvdScores[key]}<span className="text-base font-normal">/100</span></div>
+            <div className="text-xs text-slate-600 dark:text-slate-300 mt-1 text-center">
+              {key === 'overall' ? 'Average accessibility for all types' : `Visibility for ${label.toLowerCase()} (higher is better)`}
+            </div>
+          </div>
+        ))}
+      </div>
+    )}
     {analysis && (
         <div className="space-y-8">
             {/* Readability Check */}
